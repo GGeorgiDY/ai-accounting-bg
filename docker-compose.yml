@@ -1,0 +1,127 @@
+# Счетоводна AI платформа — локален стек
+# Старт:   docker compose up -d --build
+# UI:      http://localhost:8080
+# С NVIDIA GPU:  docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+
+name: accountant
+
+x-backend-env: &backend-env
+  DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-accountant}:${POSTGRES_PASSWORD:-accountant}@db:5432/${POSTGRES_DB:-accountant}
+  OLLAMA_URL: http://ollama:11434
+  LLM_MODEL: ${LLM_MODEL:-qwen2.5:7b}
+  LLM_NUM_CTX: ${LLM_NUM_CTX:-8192}
+  LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-900}
+  BOOK_CURRENCY: ${BOOK_CURRENCY:-EUR}
+  OCR_LANG: ${OCR_LANG:-bul+eng}
+  UPLOAD_DIR: /data/uploads
+
+services:
+  # ---------- Инфраструктура (образи от Docker Hub) ----------
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-accountant}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-accountant}
+      POSTGRES_DB: ${POSTGRES_DB:-accountant}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # Уеб интерфейс към базата: http://127.0.0.1:5050 (паролата на базата е POSTGRES_PASSWORD)
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@example.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_CONFIG_SERVER_MODE: "False"                 # без вход в pgAdmin (само локално)
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
+    volumes:
+      - pgadmin:/var/lib/pgadmin
+      - ./pgadmin/servers.json:/pgadmin4/servers.json:ro
+    ports:
+      - "127.0.0.1:5050:80"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  ollama:
+    image: ollama/ollama:${OLLAMA_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      OLLAMA_KEEP_ALIVE: 30m
+    volumes:
+      - ollama:/root/.ollama
+    ports:
+      - "127.0.0.1:11434:11434"   # само за дебъг от хоста
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  # Еднократно изтегля модела (първия път ~4-5 GB). Следващите стартове са мигновени.
+  ollama-pull:
+    image: ollama/ollama:${OLLAMA_TAG:-latest}
+    restart: "no"
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      LLM_MODEL: ${LLM_MODEL:-qwen2.5:7b}
+    entrypoint: ["/bin/sh", "-c", "echo \"Pulling $${LLM_MODEL}...\" && ollama pull $${LLM_MODEL}"]
+
+  # ---------- Приложение ----------
+  backend:
+    build: ./backend
+    image: accountant-backend:local
+    restart: unless-stopped
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    environment: *backend-env
+    volumes:
+      - uploads:/data/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health/live')"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  worker:
+    build: ./backend
+    image: accountant-backend:local
+    restart: unless-stopped
+    command: ["python", "-m", "app.worker"]
+    environment: *backend-env
+    volumes:
+      - uploads:/data/uploads
+      - ./samples:/samples
+    depends_on:
+      backend:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+
+  frontend:
+    build: ./frontend
+    image: accountant-frontend:local
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-8080}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  ollama:
+  uploads:
+  pgadmin:

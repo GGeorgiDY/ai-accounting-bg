@@ -1,0 +1,331 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Схема за експорт на осчетоводени първични документи, v1.0
+  Namespace: urn:bg:accounting:export:v1
+
+  Структура:
+    AccountingExport
+      Header            - кога, кой, за коя фирма и период, счетоводна валута
+      ChartOfAccounts   - всички сметки, използвани в експорта (код, име, категория)
+      Documents         - документите с редове, суми и счетоводни статии (Дт/Кт)
+      AccountTurnovers  - обороти по сметки (дебит/кредит) за експорта
+      Summary           - обобщение покупки/продажби
+
+  Гаранции на схемата:
+    * всяка сметка в статия или ред трябва да присъства в ChartOfAccounts (xs:keyref)
+    * всеки документ има уникален id
+    * суми с точно 2 знака след десетичната запетая
+-->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           xmlns="urn:bg:accounting:export:v1"
+           xmlns:a="urn:bg:accounting:export:v1"
+           targetNamespace="urn:bg:accounting:export:v1"
+           elementFormDefault="qualified"
+           attributeFormDefault="unqualified">
+
+  <!-- ===================== Прости типове ===================== -->
+
+  <xs:simpleType name="AmountType">
+    <xs:restriction base="xs:decimal">
+      <xs:totalDigits value="16"/>
+      <xs:fractionDigits value="2"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="RateType">
+    <xs:restriction base="xs:decimal">
+      <xs:fractionDigits value="10"/>
+      <xs:minExclusive value="0"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="VATRateType">
+    <xs:restriction base="xs:decimal">
+      <xs:fractionDigits value="2"/>
+      <xs:minInclusive value="0"/>
+      <xs:maxInclusive value="100"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="AccountCodeType">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[1-7][0-9]{2,3}"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="EIKType">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[0-9]{9}|[0-9]{13}"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="VATNumberType">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[A-Z]{2}[0-9A-Z]{2,13}"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="CurrencyType">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[A-Z]{3}"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="Sha256Type">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[0-9a-f]{64}"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="Text255">
+    <xs:restriction base="xs:string">
+      <xs:minLength value="1"/>
+      <xs:maxLength value="255"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="Text500">
+    <xs:restriction base="xs:string">
+      <xs:maxLength value="500"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="DirectionType">
+    <xs:restriction base="xs:string">
+      <xs:enumeration value="purchase"/>
+      <xs:enumeration value="sale"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="DocumentKindType">
+    <xs:restriction base="xs:string">
+      <xs:enumeration value="invoice"/>
+      <xs:enumeration value="credit_note"/>
+      <xs:enumeration value="debit_note"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="DocumentStatusType">
+    <xs:restriction base="xs:string">
+      <xs:enumeration value="processed"/>
+      <xs:enumeration value="approved"/>
+      <xs:enumeration value="needs_review"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="PaymentMethodType">
+    <xs:restriction base="xs:string">
+      <xs:enumeration value="bank"/>
+      <xs:enumeration value="cash"/>
+      <xs:enumeration value="card"/>
+      <xs:enumeration value="other"/>
+      <xs:enumeration value="unknown"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="AccountCategoryType">
+    <xs:restriction base="xs:string">
+      <xs:enumeration value="asset"/>
+      <xs:enumeration value="liability"/>
+      <xs:enumeration value="equity"/>
+      <xs:enumeration value="expense"/>
+      <xs:enumeration value="revenue"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="CounterpartyRoleType">
+    <xs:restriction base="xs:string">
+      <xs:enumeration value="supplier"/>
+      <xs:enumeration value="customer"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <!-- ===================== Сложни типове ===================== -->
+
+  <xs:complexType name="CompanyType">
+    <xs:sequence>
+      <xs:element name="Name" type="Text255"/>
+      <xs:element name="EIK" type="EIKType"/>
+      <xs:element name="VATNumber" type="VATNumberType" minOccurs="0"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <xs:complexType name="PeriodType">
+    <xs:sequence>
+      <xs:element name="From" type="xs:date" minOccurs="0"/>
+      <xs:element name="To" type="xs:date" minOccurs="0"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <xs:complexType name="HeaderType">
+    <xs:sequence>
+      <xs:element name="GeneratedAt" type="xs:dateTime"/>
+      <xs:element name="Software" type="Text255"/>
+      <xs:element name="BookCurrency" type="CurrencyType"/>
+      <xs:element name="Company" type="CompanyType"/>
+      <xs:element name="Period" type="PeriodType" minOccurs="0"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <xs:complexType name="AccountType">
+    <xs:attribute name="code" type="AccountCodeType" use="required"/>
+    <xs:attribute name="name" type="Text255" use="required"/>
+    <xs:attribute name="category" type="AccountCategoryType" use="required"/>
+  </xs:complexType>
+
+  <xs:complexType name="ChartOfAccountsType">
+    <xs:sequence>
+      <xs:element name="Account" type="AccountType" minOccurs="0" maxOccurs="unbounded"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <xs:complexType name="CounterpartyType">
+    <xs:sequence>
+      <xs:element name="Name" type="Text255"/>
+      <xs:element name="EIK" type="EIKType" minOccurs="0"/>
+      <xs:element name="VATNumber" type="VATNumberType" minOccurs="0"/>
+      <xs:element name="Country" type="Text255" minOccurs="0"/>
+    </xs:sequence>
+    <xs:attribute name="role" type="CounterpartyRoleType" use="required"/>
+  </xs:complexType>
+
+  <xs:complexType name="LineType">
+    <xs:sequence>
+      <xs:element name="Description" type="Text500"/>
+      <xs:element name="Quantity" type="xs:decimal" minOccurs="0"/>
+      <xs:element name="Unit" type="Text255" minOccurs="0"/>
+      <xs:element name="UnitPrice" type="xs:decimal" minOccurs="0"/>
+      <xs:element name="NetAmount" type="AmountType"/>
+      <xs:element name="VATRate" type="VATRateType"/>
+      <xs:element name="VATAmount" type="AmountType"/>
+      <xs:element name="AccountCode" type="AccountCodeType"/>
+    </xs:sequence>
+    <xs:attribute name="no" type="xs:positiveInteger" use="required"/>
+  </xs:complexType>
+
+  <xs:complexType name="TotalsType">
+    <xs:sequence>
+      <xs:element name="NetAmount" type="AmountType"/>
+      <xs:element name="VATAmount" type="AmountType"/>
+      <xs:element name="GrossAmount" type="AmountType"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <xs:complexType name="EntryType">
+    <xs:sequence>
+      <xs:element name="Debit" type="AccountCodeType"/>
+      <xs:element name="Credit" type="AccountCodeType"/>
+      <xs:element name="Amount" type="AmountType"/>
+      <xs:element name="Description" type="Text500" minOccurs="0"/>
+    </xs:sequence>
+    <xs:attribute name="no" type="xs:positiveInteger" use="required"/>
+  </xs:complexType>
+
+  <xs:complexType name="SourceType">
+    <xs:attribute name="fileName" type="Text500" use="required"/>
+    <xs:attribute name="sha256" type="Sha256Type" use="required"/>
+  </xs:complexType>
+
+  <xs:complexType name="DocumentType">
+    <xs:sequence>
+      <xs:element name="Number" type="Text255"/>
+      <xs:element name="IssueDate" type="xs:date"/>
+      <xs:element name="TaxEventDate" type="xs:date" minOccurs="0"/>
+      <xs:element name="DueDate" type="xs:date" minOccurs="0"/>
+      <xs:element name="Currency" type="CurrencyType"/>
+      <xs:element name="ExchangeRate" type="RateType"/>
+      <xs:element name="PaymentMethod" type="PaymentMethodType"/>
+      <xs:element name="Counterparty" type="CounterpartyType"/>
+      <xs:element name="Lines">
+        <xs:complexType>
+          <xs:sequence>
+            <xs:element name="Line" type="LineType" maxOccurs="unbounded"/>
+          </xs:sequence>
+        </xs:complexType>
+      </xs:element>
+      <xs:element name="Totals" type="TotalsType"/>
+      <xs:element name="JournalEntries">
+        <xs:complexType>
+          <xs:sequence>
+            <xs:element name="Entry" type="EntryType" maxOccurs="unbounded"/>
+          </xs:sequence>
+        </xs:complexType>
+      </xs:element>
+      <xs:element name="Source" type="SourceType"/>
+    </xs:sequence>
+    <xs:attribute name="id" type="xs:positiveInteger" use="required"/>
+    <xs:attribute name="kind" type="DocumentKindType" use="required"/>
+    <xs:attribute name="direction" type="DirectionType" use="required"/>
+    <xs:attribute name="status" type="DocumentStatusType" use="required"/>
+  </xs:complexType>
+
+  <xs:complexType name="TurnoverType">
+    <xs:sequence>
+      <xs:element name="DebitTurnover" type="AmountType"/>
+      <xs:element name="CreditTurnover" type="AmountType"/>
+    </xs:sequence>
+    <xs:attribute name="code" type="AccountCodeType" use="required"/>
+  </xs:complexType>
+
+  <xs:complexType name="SummaryType">
+    <xs:sequence>
+      <xs:element name="DocumentCount" type="xs:nonNegativeInteger"/>
+      <xs:element name="PurchasesNet" type="AmountType"/>
+      <xs:element name="PurchasesVAT" type="AmountType"/>
+      <xs:element name="SalesNet" type="AmountType"/>
+      <xs:element name="SalesVAT" type="AmountType"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <!-- ===================== Корен ===================== -->
+
+  <xs:element name="AccountingExport">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="Header" type="HeaderType"/>
+        <xs:element name="ChartOfAccounts" type="ChartOfAccountsType"/>
+        <xs:element name="Documents">
+          <xs:complexType>
+            <xs:sequence>
+              <xs:element name="Document" type="DocumentType" minOccurs="0" maxOccurs="unbounded"/>
+            </xs:sequence>
+          </xs:complexType>
+        </xs:element>
+        <xs:element name="AccountTurnovers">
+          <xs:complexType>
+            <xs:sequence>
+              <xs:element name="Account" type="TurnoverType" minOccurs="0" maxOccurs="unbounded"/>
+            </xs:sequence>
+          </xs:complexType>
+        </xs:element>
+        <xs:element name="Summary" type="SummaryType"/>
+      </xs:sequence>
+      <xs:attribute name="schemaVersion" type="xs:string" use="required" fixed="1.0"/>
+    </xs:complexType>
+
+    <xs:key name="AccountKey">
+      <xs:selector xpath="a:ChartOfAccounts/a:Account"/>
+      <xs:field xpath="@code"/>
+    </xs:key>
+    <xs:keyref name="EntryDebitRef" refer="AccountKey">
+      <xs:selector xpath="a:Documents/a:Document/a:JournalEntries/a:Entry"/>
+      <xs:field xpath="a:Debit"/>
+    </xs:keyref>
+    <xs:keyref name="EntryCreditRef" refer="AccountKey">
+      <xs:selector xpath="a:Documents/a:Document/a:JournalEntries/a:Entry"/>
+      <xs:field xpath="a:Credit"/>
+    </xs:keyref>
+    <xs:keyref name="LineAccountRef" refer="AccountKey">
+      <xs:selector xpath="a:Documents/a:Document/a:Lines/a:Line"/>
+      <xs:field xpath="a:AccountCode"/>
+    </xs:keyref>
+    <xs:keyref name="TurnoverAccountRef" refer="AccountKey">
+      <xs:selector xpath="a:AccountTurnovers/a:Account"/>
+      <xs:field xpath="@code"/>
+    </xs:keyref>
+    <xs:unique name="UniqueDocumentId">
+      <xs:selector xpath="a:Documents/a:Document"/>
+      <xs:field xpath="@id"/>
+    </xs:unique>
+  </xs:element>
+</xs:schema>

@@ -1,0 +1,11 @@
+# Override за NVIDIA GPU (Docker Desktop + WSL2 + актуален NVIDIA драйвер).
+# docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+services:
+  ollama:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
